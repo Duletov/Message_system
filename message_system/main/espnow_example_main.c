@@ -2,9 +2,6 @@
 #include <time.h>
 #include <string.h>
 #include <assert.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/timers.h"
 #include "nvs_flash.h"
 #include "esp_random.h"
 #include "esp_event.h"
@@ -38,7 +35,7 @@ static void wifi_init(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
     ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
-    ESP_ERROR_CHECK( esp_wifi_set_mode(ESPNOW_WIFI_MODE_STATION) );
+    ESP_ERROR_CHECK( esp_wifi_set_mode(CONFIG_ESPNOW_WIFI_MODE_STATION) );
     ESP_ERROR_CHECK( esp_wifi_start());
     ESP_ERROR_CHECK( esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
 }
@@ -66,7 +63,6 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     espnow_event_t evt;
     espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
     uint8_t * mac_addr = recv_info->src_addr;
-    uint8_t * des_addr = recv_info->des_addr;
 
     if (mac_addr == NULL || data == NULL || len <= 0) {
         ESP_LOGE(TAG, "Receive cb arg error");
@@ -134,14 +130,13 @@ static void espnow_task(void *pvParameter)
     uint8_t recv_state = 0;
     uint16_t recv_seq = 0;
     int recv_magic = 0;
-    bool is_broadcast = false;
-    int ret;
+    
+    espnow_send_param_t *send_param = (espnow_send_param_t *)pvParameter;
 
 	switch (evt.id) {
 		case ESPNOW_SEND_CB:
 		{
 			espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
-			is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
 
 			/* Delay a while before sending the next data. */
 			if (send_param->delay > 0) {
@@ -165,14 +160,18 @@ static void espnow_task(void *pvParameter)
 		{
 			espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-			ret = espnow_data_parse(recv_cb->data, recv_cb->data_len, &recv_state, &recv_seq, &recv_magic);
+			int ret = espnow_data_parse(recv_cb->data, recv_cb->data_len, &recv_state, &recv_seq, &recv_magic);
 			free(recv_cb->data);
 			
+			if (ret == ESPNOW_DATA_UNICAST) {
+			    ESP_LOGI(TAG, "Receive %dth unicast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
+			}
 			ESP_LOGI(TAG, "Receive %dth broadcast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
+            break;
 		}
 		default:
 			ESP_LOGE(TAG, "Callback type error: %d", evt.id);
-		break;
+		    break;
 	}
 }
 
