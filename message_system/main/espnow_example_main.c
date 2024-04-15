@@ -27,6 +27,43 @@ static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
 
 static void espnow_deinit(espnow_send_param_t *send_param);
 
+static espnow_send_param_t *send_param;
+
+static node_t *message_queue = NULL;
+
+void enqueue(node_t **head, espnow_event_t val) {
+   node_t *new_node = malloc(sizeof(node_t));
+   if (!new_node) return;
+
+   new_node->val = val;
+   new_node->next = *head;
+
+   *head = new_node;
+}
+
+espnow_event_t dequeue(node_t **head) {
+   node_t *current, *prev = NULL;
+   espnow_event_t retval;
+
+   if (*head == NULL) return -1;
+
+   current = *head;
+   while (current->next != NULL) {
+      prev = current;
+      current = current->next;
+   }
+
+   retval = current->val;
+   free(current);
+
+   if (prev)
+      prev->next = NULL;
+   else
+      *head = NULL;
+
+   return retval;
+}
+
 /* WiFi should start before using ESPNOW */
 static void wifi_init(void)
 {
@@ -56,6 +93,7 @@ static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status
     evt.id = ESPNOW_SEND_CB;
     memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
     send_cb->status = status;
+	enqueue(&message_queue, evt);
 }
 
 static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
@@ -80,6 +118,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     }
     memcpy(recv_cb->data, data, len);
     recv_cb->data_len = len;
+	enqueue(&message_queue, evt);
 }
 
 /* Parse received ESPNOW data. */
@@ -130,8 +169,8 @@ static void espnow_task(void *pvParameter)
     uint8_t recv_state = 0;
     uint16_t recv_seq = 0;
     int recv_magic = 0;
-    
-    espnow_send_param_t *send_param = (espnow_send_param_t *)pvParameter;
+	
+	evt = dequeue(&message_queue);
 
 	switch (evt.id) {
 		case ESPNOW_SEND_CB:
@@ -199,10 +238,6 @@ static esp_err_t espnow_init(void)
     memcpy(peer->peer_addr, s_broadcast_mac, ESP_NOW_ETH_ALEN);
     ESP_ERROR_CHECK( esp_now_add_peer(peer) );
     free(peer);
-
-
-
-    espnow_send_param_t *send_param;
 	
     /* Initialize sending parameters. */
     send_param = malloc(sizeof(espnow_send_param_t));
