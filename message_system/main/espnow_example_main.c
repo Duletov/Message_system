@@ -41,11 +41,10 @@ void enqueue(node_t **head, espnow_event_t val) {
    *head = new_node;
 }
 
-espnow_event_t dequeue(node_t **head) {
+bool dequeue(node_t **head, espnow_event_t *val) {
    node_t *current, *prev = NULL;
-   espnow_event_t retval;
 
-   if (*head == NULL) return -1;
+   if (*head == NULL) return false;
 
    current = *head;
    while (current->next != NULL) {
@@ -53,15 +52,17 @@ espnow_event_t dequeue(node_t **head) {
       current = current->next;
    }
 
-   retval = current->val;
+   val = &(current->val);
    free(current);
+   
+   ESP_LOGE(TAG, "Dequeue, %d", val->id);
 
    if (prev)
       prev->next = NULL;
    else
       *head = NULL;
 
-   return retval;
+   return true;
 }
 
 /* WiFi should start before using ESPNOW */
@@ -170,47 +171,47 @@ static void espnow_task(void *pvParameter)
     uint16_t recv_seq = 0;
     int recv_magic = 0;
 	
-	evt = dequeue(&message_queue);
+	if(dequeue(&message_queue, &evt)){
+	    switch (evt.id) {
+		    case ESPNOW_SEND_CB:
+		    {
+			    espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
 
-	switch (evt.id) {
-		case ESPNOW_SEND_CB:
-		{
-			espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+			    /* Delay a while before sending the next data. */
+			    if (send_param->delay > 0) {
+				    vTaskDelay(send_param->delay/portTICK_PERIOD_MS);
+			    }
 
-			/* Delay a while before sending the next data. */
-			if (send_param->delay > 0) {
-				vTaskDelay(send_param->delay/portTICK_PERIOD_MS);
-			}
+			    ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
 
-			ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
+			    memcpy(send_param->dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
+			    espnow_data_prepare(send_param);
 
-			memcpy(send_param->dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
-			espnow_data_prepare(send_param);
+			    /* Send the next data after the previous data is sent. */
+			    if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
+				    ESP_LOGE(TAG, "Send error");
+				    espnow_deinit(send_param);
+				    vTaskDelete(NULL);
+			    }
+			    break;
+		    }
+		    case ESPNOW_RECV_CB:
+		    {
+			    espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-			/* Send the next data after the previous data is sent. */
-			if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
-				ESP_LOGE(TAG, "Send error");
-				espnow_deinit(send_param);
-				vTaskDelete(NULL);
-			}
-			break;
-		}
-		case ESPNOW_RECV_CB:
-		{
-			espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
-
-			int ret = espnow_data_parse(recv_cb->data, recv_cb->data_len, &recv_state, &recv_seq, &recv_magic);
-			free(recv_cb->data);
-			
-			if (ret == ESPNOW_DATA_UNICAST) {
-			    ESP_LOGI(TAG, "Receive %dth unicast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
-			}
-			ESP_LOGI(TAG, "Receive %dth broadcast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
-            break;
-		}
-		default:
-			ESP_LOGE(TAG, "Callback type error: %d", evt.id);
-		    break;
+			    int ret = espnow_data_parse(recv_cb->data, recv_cb->data_len, &recv_state, &recv_seq, &recv_magic);
+			    free(recv_cb->data);
+			    
+			    if (ret == ESPNOW_DATA_UNICAST) {
+			        ESP_LOGI(TAG, "Receive %dth unicast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
+			    }
+			    ESP_LOGI(TAG, "Receive %dth broadcast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
+                break;
+		    }
+		    default:
+			    ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+		        break;
+	    }
 	}
 }
 
