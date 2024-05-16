@@ -31,40 +31,6 @@ static espnow_send_param_t *send_param;
 
 static node_t *message_queue = NULL;
 
-void enqueue(node_t **head, espnow_event_t val) {
-   node_t *new_node = malloc(sizeof(node_t));
-   if (!new_node) return;
-
-   new_node->val = val;
-   new_node->next = *head;
-
-   *head = new_node;
-}
-
-bool dequeue(node_t **head, espnow_event_t *val) {
-   node_t *current, *prev = NULL;
-
-   if (*head == NULL) return false;
-
-   current = *head;
-   while (current->next != NULL) {
-      prev = current;
-      current = current->next;
-   }
-
-   val = &(current->val);
-   free(current);
-   
-   ESP_LOGE(TAG, "Dequeue, %d", val->id);
-
-   if (prev)
-      prev->next = NULL;
-   else
-      *head = NULL;
-
-   return true;
-}
-
 /* WiFi should start before using ESPNOW */
 static void wifi_init(void)
 {
@@ -94,7 +60,6 @@ static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status
     evt.id = ESPNOW_SEND_CB;
     memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
     send_cb->status = status;
-	enqueue(&message_queue, evt);
 }
 
 static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
@@ -119,7 +84,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     }
     memcpy(recv_cb->data, data, len);
     recv_cb->data_len = len;
-	enqueue(&message_queue, evt);
+    ESP_LOGI(TAG, data);
 }
 
 /* Parse received ESPNOW data. */
